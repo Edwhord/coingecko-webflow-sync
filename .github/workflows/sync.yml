@@ -1,0 +1,29 @@
+name: Sync CoinGecko to Webflow
+
+on:
+  schedule:
+    # Runs every 6 hours (at 00:00, 06:00, 12:00, 18:00 UTC)
+    - cron: '0 */6 * * *'
+  workflow_dispatch:  # Allows you to manually trigger from GitHub UI
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: npm install
+      
+    - name: Run sync script
+      env:
+        WEBFLOW_API_TOKEN: ${{ secrets.WEBFLOW_API_TOKEN }}
+        WEBFLOW_COLLECTION_ID: ${{ secrets.WEBFLOW_COLLECTION_ID }}
+      run: node sync.js
