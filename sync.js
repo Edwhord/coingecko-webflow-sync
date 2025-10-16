@@ -81,40 +81,108 @@ function transformToWebflowFormat(coins) {
 
 // Update Webflow CMS using bulk API
 async function updateWebflowCMS(items) {
-  // Webflow bulk API has a limit, so we may need to batch
-  const batchSize = 100;
-  const batches = [];
-  
-  for (let i = 0; i < items.length; i += batchSize) {
-    batches.push(items.slice(i, i + batchSize));
-  }
+  // First, we need to check if items exist and update them, or create new ones
+  // For simplicity, we'll use the create endpoint with live: true to publish immediately
   
   const results = [];
   
-  for (const batch of batches) {
-    const response = await fetch(
-      `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION_ID}/items/bulk`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${WEBFLOW_API_TOKEN}`,
-          'Content-Type': 'application/json',
-          'accept': 'application/json'
-        },
-        body: JSON.stringify({ items: batch })
+  // Process items in batches of 10 (Webflow's recommendation for bulk operations)
+  const batchSize = 10;
+  
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    
+    console.log(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(items.length / batchSize)}...`);
+    
+    // Create/update each item individually (more reliable than bulk for now)
+    for (const item of batch) {
+      try {
+        // First, try to find existing item by coingecko-id
+        const existingItem = await findExistingItem(item.fieldData['coingecko-id']);
+        
+        if (existingItem) {
+          // Update existing item
+          const response = await fetch(
+            `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION_ID}/items/${existingItem.id}`,
+            {
+              method: 'PATCH',
+              headers: {
+                'Authorization': `Bearer ${WEBFLOW_API_TOKEN}`,
+                'Content-Type': 'application/json',
+                'accept': 'application/json'
+              },
+              body: JSON.stringify({
+                fieldData: item.fieldData
+              })
+            }
+          );
+          
+          if (response.ok) {
+            results.push(await response.json());
+          } else {
+            console.error(`Failed to update ${item.fieldData.name}: ${response.status}`);
+          }
+        } else {
+          // Create new item
+          const response = await fetch(
+            `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION_ID}/items`,
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${WEBFLOW_API_TOKEN}`,
+                'Content-Type': 'application/json',
+                'accept': 'application/json'
+              },
+              body: JSON.stringify({
+                fieldData: item.fieldData,
+                isArchived: false,
+                isDraft: false
+              })
+            }
+          );
+          
+          if (response.ok) {
+            results.push(await response.json());
+          } else {
+            const error = await response.text();
+            console.error(`Failed to create ${item.fieldData.name}: ${response.status} - ${error}`);
+          }
+        }
+        
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+      } catch (error) {
+        console.error(`Error processing ${item.fieldData.name}:`, error.message);
       }
-    );
-    
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Webflow API error: ${response.status} - ${error}`);
     }
-    
-    const result = await response.json();
-    results.push(result);
   }
   
   return results;
+}
+
+// Helper function to find existing item by coingecko-id
+async function findExistingItem(coingeckoId) {
+  try {
+    const response = await fetch(
+      `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION_ID}/items?fieldData.coingecko-id=${coingeckoId}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${WEBFLOW_API_TOKEN}`,
+          'accept': 'application/json'
+        }
+      }
+    );
+    
+    if (response.ok) {
+      const data = await response.json();
+      return data.items && data.items.length > 0 ? data.items[0] : null;
+    }
+  } catch (error) {
+    console.error(`Error finding item for ${coingeckoId}:`, error.message);
+  }
+  
+  return null;
 }
 
 // Log results
