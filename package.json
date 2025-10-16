@@ -13,14 +13,3 @@
     "node": ">=14.0.0"
   }
 }
-```
-
----
-
-## **File 3: .gitignore (Optional but recommended)**
-
-Create a file named `.gitignore` and paste this:
-```
-node_modules/
-.env
-*.log
