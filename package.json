@@ -1,0 +1,26 @@
+{
+  "name": "coingecko-webflow-sync",
+  "version": "1.0.0",
+  "description": "Sync CoinGecko top 100 coins to Webflow CMS",
+  "main": "sync.js",
+  "scripts": {
+    "start": "node sync.js"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
+```
+
+---
+
+## **File 3: .gitignore (Optional but recommended)**
+
+Create a file named `.gitignore` and paste this:
+```
+node_modules/
+.env
+*.log
