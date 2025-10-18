@@ -93,6 +93,13 @@ async function getAllWebflowItems() {
     const data = await response.json();
     items.push(...data.items);
     
+    // Debug: Show field names from first item
+    if (offset === 0 && data.items.length > 0) {
+      console.log('\n📋 Available fields in Webflow:');
+      console.log(Object.keys(data.items[0].fieldData).join(', '));
+      console.log('');
+    }
+    
     if (data.items.length < limit) {
       break;
     }
@@ -311,9 +318,9 @@ async function fetchAndSaveChartData(coins) {
       console.log(`  ✅ Saved chart data`);
       
       // Delay to respect rate limits
-      // CoinGecko free tier: 10-30 calls/min
-      // 50 coins = need ~2-3 minutes total
-      await new Promise(resolve => setTimeout(resolve, 3500)); // 3.5 seconds between calls
+      // CoinGecko free tier: ~10 calls/min = 6 seconds between calls
+      // Using 7 seconds to be safe
+      await new Promise(resolve => setTimeout(resolve, 7000)); // 7 seconds
       
     } catch (error) {
       console.error(`  ❌ Error: ${error.message}`);
