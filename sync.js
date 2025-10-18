@@ -1,6 +1,8 @@
-// CoinGecko to Webflow + Google Sheets Sync Script
+// CoinGecko to Webflow + Google Sheets + Chart Data Sync Script
 const fetch = require('node-fetch');
 const { google } = require('googleapis');
+const fs = require('fs').promises;
+const path = require('path');
 
 const WEBFLOW_API_TOKEN = process.env.WEBFLOW_API_TOKEN;
 const WEBFLOW_COLLECTION_ID = process.env.WEBFLOW_COLLECTION_ID;
@@ -13,7 +15,7 @@ async function syncCoinsToWebflow() {
   try {
     console.log('Starting sync...');
     
-    // Step 1: Fetch top 100 coins from CoinGecko
+    // Step 1: Fetch top 50 coins from CoinGecko
     const coins = await fetchTopCoins();
     console.log(`Fetched ${coins.length} coins from CoinGecko`);
     
@@ -21,16 +23,23 @@ async function syncCoinsToWebflow() {
     const existingItems = await getAllWebflowItems();
     console.log(`Found ${existingItems.length} existing items in Webflow`);
     
-    // Step 3: Transform and sync data to Webflow
+    // Step 3: Sync data to Webflow
     const result = await syncItems(coins, existingItems);
     console.log('Webflow CMS updated successfully');
     
     // Step 4: Update Google Sheets
-    console.log('Updating Google Sheets...');
+    console.log('\nUpdating Google Sheets...');
     await updateGoogleSheets(coins);
     console.log('Google Sheets updated successfully');
     
-    // Step 5: Log results
+    // Step 5: Clean up old chart files and fetch new chart data
+    console.log('\nCleaning up old chart files...');
+    await cleanupOldChartFiles(coins);
+    console.log('Fetching chart data for all coins...');
+    await fetchAndSaveChartData(coins); // All 50 coins
+    console.log('Chart data saved successfully');
+    
+    // Step 6: Log results
     logResults(result);
     
     return result;
@@ -40,12 +49,12 @@ async function syncCoinsToWebflow() {
   }
 }
 
-// Fetch top 100 coins from CoinGecko
+// Fetch top 50 coins from CoinGecko
 async function fetchTopCoins() {
   const params = new URLSearchParams({
     vs_currency: 'usd',
     order: 'market_cap_desc',
-    per_page: 100,
+    per_page: 50,
     page: 1,
     sparkline: false,
     price_change_percentage: '24h,7d,30d,1y'
@@ -107,7 +116,8 @@ async function syncItems(coins, existingItems) {
     }
   });
   
-  console.log(`\nProcessing ${coins.length} coins...`);
+  console.log(`Existing items mapped: ${existingMap.size}`);
+  console.log(`Processing ${coins.length} coins...\n`);
   
   for (let i = 0; i < coins.length; i++) {
     const coin = coins[i];
@@ -126,6 +136,8 @@ async function syncItems(coins, existingItems) {
         'volume-24h': coin.total_volume?.toString() || '0',
         'circulating-supply': coin.circulating_supply?.toString() || '0',
         'total-supply': coin.total_supply?.toString() || '0',
+        'ath-usd': coin.ath?.toString() || '0',
+        'atl-usd': coin.atl?.toString() || '0',
         'coingecko-id': coingeckoId,
         'last-updated': new Date().toISOString()
       };
@@ -151,7 +163,6 @@ async function syncItems(coins, existingItems) {
         
         if (response.ok) {
           results.updated++;
-          console.log(`  ✅ Updated`);
         } else {
           const errorText = await response.text();
           console.error(`  ❌ Failed (${response.status}): ${errorText}`);
@@ -180,7 +191,6 @@ async function syncItems(coins, existingItems) {
         
         if (response.ok) {
           results.created++;
-          console.log(`  ✅ Created`);
         } else {
           const errorText = await response.text();
           console.error(`  ❌ Failed (${response.status}): ${errorText}`);
@@ -192,12 +202,145 @@ async function syncItems(coins, existingItems) {
       await new Promise(resolve => setTimeout(resolve, 100));
       
     } catch (error) {
-      console.error(`[${i + 1}/${coins.length}] Error processing ${coin.name}:`, error.message);
+      console.error(`[${i + 1}/${coins.length}] Error: ${error.message}`);
       results.failed++;
     }
   }
   
   return results;
+}
+
+// Clean up chart files for coins no longer in top 50
+async function cleanupOldChartFiles(currentCoins) {
+  const dataDir = path.join(process.cwd(), 'data', 'charts');
+  const currentIds = new Set(currentCoins.map(c => c.id));
+  
+  try {
+    // Create directory if it doesn't exist
+    await fs.mkdir(dataDir, { recursive: true });
+    
+    // Read existing files
+    const files = await fs.readdir(dataDir);
+    let deletedCount = 0;
+    
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      
+      const coinId = file.replace('.json', '');
+      if (!currentIds.has(coinId)) {
+        await fs.unlink(path.join(dataDir, file));
+        console.log(`  🗑️  Deleted: ${file}`);
+        deletedCount++;
+      }
+    }
+    
+    if (deletedCount === 0) {
+      console.log('  ✅ No old files to clean up');
+    } else {
+      console.log(`  ✅ Cleaned up ${deletedCount} old file(s)`);
+    }
+    
+  } catch (error) {
+    console.error('  ⚠️  Cleanup error:', error.message);
+  }
+}
+
+// Fetch and save chart data for coins
+async function fetchAndSaveChartData(coins) {
+  // Create data directory if it doesn't exist
+  const dataDir = path.join(process.cwd(), 'data', 'charts');
+  try {
+    await fs.mkdir(dataDir, { recursive: true });
+  } catch (error) {
+    console.error('Error creating data directory:', error.message);
+  }
+  
+  for (let i = 0; i < coins.length; i++) {
+    const coin = coins[i];
+    console.log(`[${i + 1}/${coins.length}] Fetching charts for ${coin.name}...`);
+    
+    try {
+      // Fetch 365 days of data (includes price, market cap, volume)
+      const response = await fetch(
+        `https://api.coingecko.com/api/v3/coins/${coin.id}/market_chart?vs_currency=usd&days=365`
+      );
+      
+      if (!response.ok) {
+        console.error(`  ❌ Failed to fetch chart data: ${response.status}`);
+        continue;
+      }
+      
+      const chartData = await response.json();
+      
+      // Process and downsample the data
+      const processed = {
+        coingecko_id: coin.id,
+        name: coin.name,
+        symbol: coin.symbol.toUpperCase(),
+        charts: {
+          '7d': {
+            prices: downsampleData(chartData.prices.slice(-168), 28), // Last 7 days hourly → 28 points (every 6h)
+            market_caps: downsampleData(chartData.market_caps.slice(-168), 28),
+            volumes: downsampleData(chartData.total_volumes.slice(-168), 28),
+            interval: '6_hours',
+            points: 28
+          },
+          '30d': {
+            prices: downsampleData(chartData.prices.slice(-720), 10), // Last 30 days hourly → 10 points (every 3 days)
+            market_caps: downsampleData(chartData.market_caps.slice(-720), 10),
+            volumes: downsampleData(chartData.total_volumes.slice(-720), 10),
+            interval: '3_days',
+            points: 10
+          },
+          '1y': {
+            prices: downsampleData(chartData.prices, 12), // Full year → 12 points (monthly)
+            market_caps: downsampleData(chartData.market_caps, 12),
+            volumes: downsampleData(chartData.total_volumes, 12),
+            interval: 'monthly',
+            points: 12
+          }
+        },
+        ath: coin.ath,
+        atl: coin.atl,
+        last_updated: new Date().toISOString()
+      };
+      
+      // Save to file
+      const filename = path.join(dataDir, `${coin.id}.json`);
+      await fs.writeFile(filename, JSON.stringify(processed, null, 2));
+      console.log(`  ✅ Saved chart data`);
+      
+      // Delay to respect rate limits
+      // CoinGecko free tier: 10-30 calls/min
+      // 50 coins = need ~2-3 minutes total
+      await new Promise(resolve => setTimeout(resolve, 3500)); // 3.5 seconds between calls
+      
+    } catch (error) {
+      console.error(`  ❌ Error: ${error.message}`);
+    }
+  }
+}
+
+// Downsample data to target number of points
+function downsampleData(data, targetPoints) {
+  if (!data || data.length === 0) return [];
+  if (data.length <= targetPoints) return data;
+  
+  const step = Math.floor(data.length / targetPoints);
+  const result = [];
+  
+  for (let i = 0; i < data.length; i += step) {
+    if (result.length < targetPoints) {
+      result.push(data[i]);
+    }
+  }
+  
+  // Ensure we always include the last data point
+  if (result.length < targetPoints && data.length > 0) {
+    result.push(data[data.length - 1]);
+  }
+  
+  return result;
 }
 
 // Update Google Sheets with coin data
@@ -208,10 +351,7 @@ async function updateGoogleSheets(coins) {
   }
   
   try {
-    // Parse service account credentials
     const credentials = JSON.parse(GOOGLE_SERVICE_ACCOUNT);
-    
-    // Create auth client
     const auth = new google.auth.GoogleAuth({
       credentials,
       scopes: ['https://www.googleapis.com/auth/spreadsheets']
@@ -219,14 +359,13 @@ async function updateGoogleSheets(coins) {
     
     const sheets = google.sheets({ version: 'v4', auth });
     
-    // Prepare header row
     const headers = [
       'coingecko_id', 'name', 'symbol', 'logo_url', 'price', 
       'change_24h', 'change_7d', 'change_30d', 'market_cap', 
-      'volume_24h', 'circulating_supply', 'total_supply', 'last_updated'
+      'volume_24h', 'circulating_supply', 'total_supply',
+      'ath_usd', 'atl_usd', 'last_updated'
     ];
     
-    // Prepare data rows
     const rows = coins.map(coin => [
       coin.id,
       coin.name,
@@ -240,10 +379,11 @@ async function updateGoogleSheets(coins) {
       coin.total_volume,
       coin.circulating_supply,
       coin.total_supply,
+      coin.ath,
+      coin.atl,
       new Date().toISOString()
     ]);
     
-    // Clear existing data and write new data
     await sheets.spreadsheets.values.clear({
       spreadsheetId: GOOGLE_SHEET_ID,
       range: 'Sheet1!A:Z'
@@ -258,11 +398,10 @@ async function updateGoogleSheets(coins) {
       }
     });
     
-    console.log(`  ✅ Updated ${rows.length} rows in Google Sheets`);
+    console.log(`  ✅ Updated ${rows.length} rows`);
     
   } catch (error) {
-    console.error('  ❌ Failed to update Google Sheets:', error.message);
-    // Don't throw - continue even if Sheets update fails
+    console.error('  ❌ Failed:', error.message);
   }
 }
 
@@ -274,7 +413,7 @@ function logResults(results) {
   console.log(`✅ Webflow Updated: ${results.updated}`);
   console.log(`✨ Webflow Created: ${results.created}`);
   console.log(`❌ Failed: ${results.failed}`);
-  console.log(`📊 Total Processed: ${results.updated + results.created + results.failed}`);
+  console.log(`📊 Total: ${results.updated + results.created + results.failed}`);
   console.log('='.repeat(50));
 }
 
