@@ -1,8 +1,11 @@
-// CoinGecko to Webflow CMS Sync Script
+// CoinGecko to Webflow + Google Sheets Sync Script
 const fetch = require('node-fetch');
+const { google } = require('googleapis');
 
 const WEBFLOW_API_TOKEN = process.env.WEBFLOW_API_TOKEN;
 const WEBFLOW_COLLECTION_ID = process.env.WEBFLOW_COLLECTION_ID;
+const GOOGLE_SERVICE_ACCOUNT = process.env.GOOGLE_SERVICE_ACCOUNT;
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const COINGECKO_API_URL = 'https://api.coingecko.com/api/v3/coins/markets';
 
 // Main function
@@ -18,11 +21,16 @@ async function syncCoinsToWebflow() {
     const existingItems = await getAllWebflowItems();
     console.log(`Found ${existingItems.length} existing items in Webflow`);
     
-    // Step 3: Transform and sync data
+    // Step 3: Transform and sync data to Webflow
     const result = await syncItems(coins, existingItems);
-    console.log('Sync completed successfully');
+    console.log('Webflow CMS updated successfully');
     
-    // Step 4: Log results
+    // Step 4: Update Google Sheets
+    console.log('Updating Google Sheets...');
+    await updateGoogleSheets(coins);
+    console.log('Google Sheets updated successfully');
+    
+    // Step 5: Log results
     logResults(result);
     
     return result;
@@ -86,7 +94,7 @@ async function getAllWebflowItems() {
   return items;
 }
 
-// Sync items - update existing or create new
+// Sync items to Webflow - update existing or create new
 async function syncItems(coins, existingItems) {
   const results = { updated: 0, created: 0, failed: 0 };
   
@@ -192,15 +200,81 @@ async function syncItems(coins, existingItems) {
   return results;
 }
 
+// Update Google Sheets with coin data
+async function updateGoogleSheets(coins) {
+  if (!GOOGLE_SERVICE_ACCOUNT || !GOOGLE_SHEET_ID) {
+    console.log('⚠️  Google Sheets not configured, skipping...');
+    return;
+  }
+  
+  try {
+    // Parse service account credentials
+    const credentials = JSON.parse(GOOGLE_SERVICE_ACCOUNT);
+    
+    // Create auth client
+    const auth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets']
+    });
+    
+    const sheets = google.sheets({ version: 'v4', auth });
+    
+    // Prepare header row
+    const headers = [
+      'coingecko_id', 'name', 'symbol', 'logo_url', 'price', 
+      'change_24h', 'change_7d', 'change_30d', 'market_cap', 
+      'volume_24h', 'circulating_supply', 'total_supply', 'last_updated'
+    ];
+    
+    // Prepare data rows
+    const rows = coins.map(coin => [
+      coin.id,
+      coin.name,
+      coin.symbol?.toUpperCase(),
+      coin.image,
+      coin.current_price,
+      coin.price_change_percentage_24h,
+      coin.price_change_percentage_7d_in_currency,
+      coin.price_change_percentage_30d_in_currency,
+      coin.market_cap,
+      coin.total_volume,
+      coin.circulating_supply,
+      coin.total_supply,
+      new Date().toISOString()
+    ]);
+    
+    // Clear existing data and write new data
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: 'Sheet1!A:Z'
+    });
+    
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: 'Sheet1!A1',
+      valueInputOption: 'RAW',
+      resource: {
+        values: [headers, ...rows]
+      }
+    });
+    
+    console.log(`  ✅ Updated ${rows.length} rows in Google Sheets`);
+    
+  } catch (error) {
+    console.error('  ❌ Failed to update Google Sheets:', error.message);
+    // Don't throw - continue even if Sheets update fails
+  }
+}
+
 // Log results
 function logResults(results) {
   console.log('\n' + '='.repeat(50));
   console.log('SYNC RESULTS');
   console.log('='.repeat(50));
-  console.log(`✅ Updated: ${results.updated}`);
-  console.log(`✨ Created: ${results.created}`);
+  console.log(`✅ Webflow Updated: ${results.updated}`);
+  console.log(`✨ Webflow Created: ${results.created}`);
   console.log(`❌ Failed: ${results.failed}`);
-  console.log(`📊 Total: ${results.updated + results.created + results.failed}`);
+  console.log(`📊 Total Processed: ${results.updated + results.created + results.failed}`);
   console.log('='.repeat(50));
 }
 
