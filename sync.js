@@ -160,12 +160,13 @@ async function syncItems(coins, existingItems) {
         'change-24h': coin.price_change_percentage_24h?.toString() || '0',
         'change-7d': coin.price_change_percentage_7d_in_currency?.toString() || '0',
         'change-30d': coin.price_change_percentage_30d_in_currency?.toString() || '0',
+        'change-1y': coin.price_change_percentage_1y_in_currency?.toString() || '0',
         'market-cap': coin.market_cap?.toString() || '0',
         'volume-24h': coin.total_volume?.toString() || '0',
         'circulating-supply': coin.circulating_supply?.toString() || '0',
         'total-supply': coin.total_supply?.toString() || '0',
-        'ath_usd': coin.ath?.toString() || '0',
-        'atl_usd': coin.atl?.toString() || '0',
+        'ath-usd-3': coin.ath?.toString() || '0',
+        'atl-usd-3': coin.atl?.toString() || '0',
         'coingecko-id': coingeckoId,
         'last-updated': new Date().toISOString()
       };
