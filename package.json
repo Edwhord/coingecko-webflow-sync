@@ -1,13 +1,14 @@
 {
   "name": "coingecko-webflow-sync",
   "version": "1.0.0",
-  "description": "Sync CoinGecko top 100 coins to Webflow CMS",
+  "description": "Sync CoinGecko top 100 coins to Webflow CMS and Google Sheets",
   "main": "sync.js",
   "scripts": {
     "start": "node sync.js"
   },
   "dependencies": {
-    "node-fetch": "^2.7.0"
+    "node-fetch": "^2.7.0",
+    "googleapis": "^128.0.0"
   },
   "engines": {
     "node": ">=14.0.0"
