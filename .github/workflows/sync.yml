@@ -26,4 +26,6 @@ jobs:
       env:
         WEBFLOW_API_TOKEN: ${{ secrets.WEBFLOW_API_TOKEN }}
         WEBFLOW_COLLECTION_ID: ${{ secrets.WEBFLOW_COLLECTION_ID }}
+        GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+        GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
       run: node sync.js
