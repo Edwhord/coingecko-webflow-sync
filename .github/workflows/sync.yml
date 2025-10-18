@@ -9,10 +9,14 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Add this to give write permission
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}  # Use GitHub's automatic token
       
     - name: Setup Node.js
       uses: actions/setup-node@v3
