@@ -29,3 +29,11 @@ jobs:
         GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
         GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
       run: node sync.js
+      
+    - name: Commit chart data
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add data/charts/
+        git diff --quiet && git diff --staged --quiet || git commit -m "Update chart data [skip ci]"
+        git push
