@@ -15,6 +15,27 @@ async function syncCoinsToWebflow() {
   try {
     console.log('Starting sync...');
     
+    // Debug: Fetch collection schema to see field definitions
+    console.log('Fetching collection schema...');
+    const schemaResponse = await fetch(
+      `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION_ID}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${WEBFLOW_API_TOKEN}`,
+          'accept': 'application/json'
+        }
+      }
+    );
+    
+    if (schemaResponse.ok) {
+      const schema = await schemaResponse.json();
+      console.log('\n📋 Collection Fields:');
+      schema.fields.forEach(field => {
+        console.log(`  - ${field.displayName}: "${field.slug}" (${field.type})`);
+      });
+      console.log('');
+    }
+    
     // Step 1: Fetch top 50 coins from CoinGecko
     const coins = await fetchTopCoins();
     console.log(`Fetched ${coins.length} coins from CoinGecko`);
@@ -143,8 +164,8 @@ async function syncItems(coins, existingItems) {
         'volume-24h': coin.total_volume?.toString() || '0',
         'circulating-supply': coin.circulating_supply?.toString() || '0',
         'total-supply': coin.total_supply?.toString() || '0',
-        'ath-usd': coin.ath?.toString() || '0',
-        'atl-usd': coin.atl?.toString() || '0',
+        'ath_usd': coin.ath?.toString() || '0',
+        'atl_usd': coin.atl?.toString() || '0',
         'coingecko-id': coingeckoId,
         'last-updated': new Date().toISOString()
       };
@@ -318,9 +339,8 @@ async function fetchAndSaveChartData(coins) {
       console.log(`  ✅ Saved chart data`);
       
       // Delay to respect rate limits
-      // CoinGecko free tier: ~10 calls/min = 6 seconds between calls
-      // Using 7 seconds to be safe
-      await new Promise(resolve => setTimeout(resolve, 7000)); // 7 seconds
+      // CoinGecko free tier is very strict - using 10 seconds to be safe
+      await new Promise(resolve => setTimeout(resolve, 10000)); // 10 seconds
       
     } catch (error) {
       console.error(`  ❌ Error: ${error.message}`);
