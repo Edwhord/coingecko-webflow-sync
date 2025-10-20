@@ -3,12 +3,11 @@
   "version": "1.0.0",
   "description": "Sync CoinGecko top 50 coins to Webflow CMS and Google Sheets",
   "main": "sync.js",
-  "type": "module",
   "scripts": {
     "start": "node sync.js"
   },
   "dependencies": {
-    "node-fetch": "^3.3.2",
+    "node-fetch": "^2.7.0",
     "googleapis": "^128.0.0"
   },
   "engines": {
