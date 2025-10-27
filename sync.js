@@ -198,7 +198,7 @@ async function syncItems(coins, existingItems) {
         'total-supply-2': coin.total_supply?.toString() || '0',
         'ath-usd-4': coin.ath?.toString() || '0',
         'atl-usd-4': coin.atl?.toString() || '0',
-        'coingecko-id-2': coingeckoId,
+        'coingecko-id': coingeckoId,
         'last-updated': new Date().toISOString()
       };
       
