@@ -44,16 +44,19 @@ async function syncCoinsToWebflow() {
     const existingItems = await getAllWebflowItems();
     console.log(`Found ${existingItems.length} existing items in Webflow`);
     
-    // Step 3: Sync data to Webflow
+    // Step 3: Sync data to Webflow (update existing, create new)
     const result = await syncItems(coins, existingItems);
     console.log('Webflow CMS updated successfully');
     
-    // Step 4: Update Google Sheets
+    // Step 4: Archive coins that are no longer in top 50
+    await archiveOldCoins(coins, existingItems);
+    
+    // Step 5: Update Google Sheets
     console.log('\nUpdating Google Sheets...');
     await updateGoogleSheets(coins);
     console.log('Google Sheets updated successfully');
     
-    // Step 5: Fetch chart data in rotating batches to avoid rate limits
+    // Step 6: Fetch chart data in rotating batches to avoid rate limits
     console.log('\nCleaning up old chart files...');
     await cleanupOldChartFiles(coins);
     
@@ -71,7 +74,7 @@ async function syncCoinsToWebflow() {
     await fetchAndSaveChartData(batchCoins);
     console.log(`Chart data saved for ${batchCoins.length} coins`);
     
-    // Step 6: Log results
+    // Step 7: Log results
     logResults(result);
     
     return result;
@@ -142,45 +145,71 @@ async function getAllWebflowItems() {
   return items;
 }
 
-// Delete all items from Webflow
-async function deleteAllItems(items) {
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    console.log(`  Deleting [${i + 1}/${items.length}]: ${item.fieldData?.name || item.id}`);
-    
+// Archive coins that are no longer in top 50
+async function archiveOldCoins(currentCoins, existingItems) {
+  const currentCoinIds = new Set(currentCoins.map(c => c.id));
+  const itemsToArchive = existingItems.filter(item => 
+    !currentCoinIds.has(item.fieldData['coingecko-id'])
+  );
+  
+  console.log(`\nArchiving ${itemsToArchive.length} coins no longer in top 50...`);
+  
+  for (let i = 0; i < itemsToArchive.length; i++) {
+    const item = itemsToArchive[i];
     try {
       const response = await fetch(
         `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION_ID}/items/${item.id}`,
         {
-          method: 'DELETE',
+          method: 'PATCH',
           headers: {
             'Authorization': `Bearer ${WEBFLOW_API_TOKEN}`,
+            'Content-Type': 'application/json',
             'accept': 'application/json'
-          }
+          },
+          body: JSON.stringify({ 
+            isArchived: true 
+          })
         }
       );
       
-      if (!response.ok) {
-        console.error(`    ❌ Failed to delete: ${response.status}`);
+      if (response.ok) {
+        console.log(`  ✅ Archived: ${item.fieldData.name}`);
+      } else {
+        const errorText = await response.text();
+        console.error(`  ❌ Failed to archive ${item.fieldData.name}: ${errorText}`);
       }
       
       // Small delay to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 100));
     } catch (error) {
-      console.error(`    ❌ Error: ${error.message}`);
+      console.error(`  ❌ Error archiving ${item.fieldData.name}: ${error.message}`);
     }
+  }
+  
+  if (itemsToArchive.length === 0) {
+    console.log('  ✅ No coins to archive');
   }
 }
 
-// Sync items to Webflow - create all items (existing ones already deleted)
+// Sync items to Webflow - update existing, create new ones
 async function syncItems(coins, existingItems) {
   const results = { updated: 0, created: 0, failed: 0 };
   
-  console.log(`\nCreating ${coins.length} coins in Webflow...\n`);
+  // Create a map of existing items by coingecko-id for easy lookup
+  const existingItemsMap = new Map();
+  existingItems.forEach(item => {
+    const coingeckoId = item.fieldData['coingecko-id'];
+    if (coingeckoId) {
+      existingItemsMap.set(coingeckoId, item);
+    }
+  });
+  
+  console.log(`\nSyncing ${coins.length} coins to Webflow...\n`);
   
   for (let i = 0; i < coins.length; i++) {
     const coin = coins[i];
     const coingeckoId = coin.id;
+    const existingItem = existingItemsMap.get(coingeckoId);
     
     try {
       const fieldData = {
@@ -202,9 +231,32 @@ async function syncItems(coins, existingItems) {
         'last-updated': new Date().toISOString()
       };
       
-      // Create new item (we already deleted all existing items)
-      console.log(`[${i + 1}/${coins.length}] Creating: ${coin.name}`);
+      if (existingItem) {
+        // UPDATE existing item (preserves the item and its ID)
+        console.log(`[${i + 1}/${coins.length}] Updating: ${coin.name}`);
+        const response = await fetch(
+          `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION_ID}/items/${existingItem.id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Authorization': `Bearer ${WEBFLOW_API_TOKEN}`,
+              'Content-Type': 'application/json',
+              'accept': 'application/json'
+            },
+            body: JSON.stringify({ fieldData })
+          }
+        );
         
+        if (response.ok) {
+          results.updated++;
+        } else {
+          const errorText = await response.text();
+          console.error(`  ❌ Failed to update (${response.status}): ${errorText}`);
+          results.failed++;
+        }
+      } else {
+        // CREATE new item (for coins that entered top 50)
+        console.log(`[${i + 1}/${coins.length}] Creating: ${coin.name}`);
         const response = await fetch(
           `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION_ID}/items`,
           {
@@ -226,9 +278,10 @@ async function syncItems(coins, existingItems) {
           results.created++;
         } else {
           const errorText = await response.text();
-          console.error(`  ❌ Failed (${response.status}): ${errorText}`);
+          console.error(`  ❌ Failed to create (${response.status}): ${errorText}`);
           results.failed++;
         }
+      }
       
       // Small delay to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 100));
