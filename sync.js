@@ -491,8 +491,13 @@ function normalizeTimestamps(data, pointsCount, baseTime, isOneYear = false) {
       return [timestamp, value];
     });
   } else {
-    // For other ranges: use the existing logic
-    const hoursBack = pointsCount; // For hourly data, pointsCount = hours
+    // For other ranges: calculate hoursBack based on pointsCount
+    let hoursBack;
+    if (pointsCount === 24) hoursBack = 24; // 24h range
+    else if (pointsCount === 168) hoursBack = 168; // 7d range (168 hours)
+    else if (pointsCount === 720) hoursBack = 720; // 30d range (720 hours)
+    else hoursBack = pointsCount; // fallback
+    
     const startTime = baseTime - (hoursBack * 60 * 60 * 1000);
     const interval = (hoursBack * 60 * 60 * 1000) / data.length;
     
