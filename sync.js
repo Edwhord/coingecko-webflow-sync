@@ -360,73 +360,73 @@ async function fetchAndSaveChartData(coins) {
       // Get current time for timestamp normalization
       const now = Date.now();
       
-      // Process data with normalized timestamps
-      const prices24h = processTimeRange(chartData.prices, 24, 12, now); // 24h: 12 points
-      const prices7d = processTimeRange(chartData.prices, 168, 28, now); // 7d: 28 points
-      const prices30d = processTimeRange(chartData.prices, 720, 30, now); // 30d: 30 points
-      const prices1y = processTimeRange(chartData.prices, 8760, 12, now); // 1y: 12 points
-      
-      const marketCaps24h = processTimeRange(chartData.market_caps, 24, 12, now);
-      const marketCaps7d = processTimeRange(chartData.market_caps, 168, 28, now);
-      const marketCaps30d = processTimeRange(chartData.market_caps, 720, 30, now);
-      const marketCaps1y = processTimeRange(chartData.market_caps, 8760, 12, now);
-      
-      const volumes24h = processTimeRange(chartData.total_volumes, 24, 12, now);
-      const volumes7d = processTimeRange(chartData.total_volumes, 168, 28, now);
-      const volumes30d = processTimeRange(chartData.total_volumes, 720, 30, now);
-      const volumes1y = processTimeRange(chartData.total_volumes, 8760, 12, now);
-      
-      // Process and downsample the data
-      const processed = {
-        coingecko_id: coin.id,
-        name: coin.name,
-        symbol: coin.symbol.toUpperCase(),
-        charts: {
-          '24h': {
-            prices: prices24h.data,
-            prices_percent_change: calculatePercentageChange(prices24h.data),
-            market_caps: marketCaps24h.data,
-            market_caps_percent_change: calculatePercentageChange(marketCaps24h.data),
-            volumes: volumes24h.data,
-            volumes_percent_change: calculatePercentageChange(volumes24h.data),
-            interval: '2_hours',
-            points: 12
-          },
-          '7d': {
-            prices: prices7d.data,
-            prices_percent_change: calculatePercentageChange(prices7d.data),
-            market_caps: marketCaps7d.data,
-            market_caps_percent_change: calculatePercentageChange(marketCaps7d.data),
-            volumes: volumes7d.data,
-            volumes_percent_change: calculatePercentageChange(volumes7d.data),
-            interval: '6_hours',
-            points: 28
-          },
-          '30d': {
-            prices: prices30d.data,
-            prices_percent_change: calculatePercentageChange(prices30d.data),
-            market_caps: marketCaps30d.data,
-            market_caps_percent_change: calculatePercentageChange(marketCaps30d.data),
-            volumes: volumes30d.data,
-            volumes_percent_change: calculatePercentageChange(volumes30d.data),
-            interval: '1_day',
-            points: 30
-          },
-          '1y': {
-            prices: prices1y.data,
-            prices_percent_change: calculatePercentageChange(prices1y.data),
-            market_caps: marketCaps1y.data,
-            market_caps_percent_change: calculatePercentageChange(marketCaps1y.data),
-            volumes: volumes1y.data,
-            volumes_percent_change: calculatePercentageChange(volumes1y.data),
-            interval: 'monthly',
-            points: 12
-          }
+// Process data with ALL points (no downsampling)
+const prices24h = getRecentData(chartData.prices, 24, now); // 24 points
+const prices7d = getRecentData(chartData.prices, 168, now); // 168 points
+const prices30d = getRecentData(chartData.prices, 720, now); // 720 points
+const prices1y = getRecentData(chartData.prices, 365, now); // 365 points (daily)
+
+const marketCaps24h = getRecentData(chartData.market_caps, 24, now);
+const marketCaps7d = getRecentData(chartData.market_caps, 168, now);
+const marketCaps30d = getRecentData(chartData.market_caps, 720, now);
+const marketCaps1y = getRecentData(chartData.market_caps, 365, now);
+
+const volumes24h = getRecentData(chartData.total_volumes, 24, now);
+const volumes7d = getRecentData(chartData.total_volumes, 168, now);
+const volumes30d = getRecentData(chartData.total_volumes, 720, now);
+const volumes1y = getRecentData(chartData.total_volumes, 365, now);
+
+// Process and save ALL data
+const processed = {
+    coingecko_id: coin.id,
+    name: coin.name,
+    symbol: coin.symbol.toUpperCase(),
+    charts: {
+        '24h': {
+            prices: prices24h,
+            prices_percent_change: calculatePercentageChange(prices24h), // Accurate from full data
+            market_caps: marketCaps24h,
+            market_caps_percent_change: calculatePercentageChange(marketCaps24h),
+            volumes: volumes24h,
+            volumes_percent_change: calculatePercentageChange(volumes24h),
+            interval: 'hourly',
+            points: 24
         },
-        ath: coin.ath,
-        atl: coin.atl,
-        last_updated: new Date().toISOString()
-      };
+        '7d': {
+            prices: prices7d,
+            prices_percent_change: calculatePercentageChange(prices7d), // Accurate from full data
+            market_caps: marketCaps7d,
+            market_caps_percent_change: calculatePercentageChange(marketCaps7d),
+            volumes: volumes7d,
+            volumes_percent_change: calculatePercentageChange(volumes7d),
+            interval: 'hourly',
+            points: 168
+        },
+        '30d': {
+            prices: prices30d,
+            prices_percent_change: calculatePercentageChange(prices30d), // Accurate from full data
+            market_caps: marketCaps30d,
+            market_caps_percent_change: calculatePercentageChange(marketCaps30d),
+            volumes: volumes30d,
+            volumes_percent_change: calculatePercentageChange(volumes30d),
+            interval: 'hourly',
+            points: 720
+        },
+        '1y': {
+            prices: prices1y,
+            prices_percent_change: calculatePercentageChange(prices1y), // Accurate from full data
+            market_caps: marketCaps1y,
+            market_caps_percent_change: calculatePercentageChange(marketCaps1y),
+            volumes: volumes1y,
+            volumes_percent_change: calculatePercentageChange(volumes1y),
+            interval: 'daily',
+            points: 365
+        }
+    },
+    ath: coin.ath,
+    atl: coin.atl,
+    last_updated: new Date().toISOString()
+};
       
       // Save to file
       const filename = path.join(dataDir, `${coin.id}.json`);
