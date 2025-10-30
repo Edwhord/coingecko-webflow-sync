@@ -345,9 +345,9 @@ async function fetchAndSaveChartData(coins) {
     console.log(`[${i + 1}/${coins.length}] Fetching charts for ${coin.name}...`);
     
     try {
-      // Fetch 365 days of data (includes price, market cap, volume)
+      // Fetch 90 days of data (better resolution for recent data)
       const response = await fetch(
-        `https://api.coingecko.com/api/v3/coins/${coin.id}/market_chart?vs_currency=usd&days=365`
+        `https://api.coingecko.com/api/v3/coins/${coin.id}/market_chart?vs_currency=usd&days=90`
       );
       
       if (!response.ok) {
@@ -357,18 +357,24 @@ async function fetchAndSaveChartData(coins) {
       
       const chartData = await response.json();
       
-      // Downsample the data
-      const prices7d = downsampleData(chartData.prices.slice(-168), 28);
-      const marketCaps7d = downsampleData(chartData.market_caps.slice(-168), 28);
-      const volumes7d = downsampleData(chartData.total_volumes.slice(-168), 28);
+      // Get current time for timestamp normalization
+      const now = Date.now();
       
-      const prices30d = downsampleData(chartData.prices.slice(-720), 10);
-      const marketCaps30d = downsampleData(chartData.market_caps.slice(-720), 10);
-      const volumes30d = downsampleData(chartData.total_volumes.slice(-720), 10);
+      // Process data with normalized timestamps
+      const prices24h = processTimeRange(chartData.prices, 24, 12, now); // 24h: 12 points
+      const prices7d = processTimeRange(chartData.prices, 168, 28, now); // 7d: 28 points
+      const prices30d = processTimeRange(chartData.prices, 720, 30, now); // 30d: 30 points
+      const prices1y = processTimeRange(chartData.prices, 8760, 12, now); // 1y: 12 points
       
-      const prices1y = downsampleData(chartData.prices, 12);
-      const marketCaps1y = downsampleData(chartData.market_caps, 12);
-      const volumes1y = downsampleData(chartData.total_volumes, 12);
+      const marketCaps24h = processTimeRange(chartData.market_caps, 24, 12, now);
+      const marketCaps7d = processTimeRange(chartData.market_caps, 168, 28, now);
+      const marketCaps30d = processTimeRange(chartData.market_caps, 720, 30, now);
+      const marketCaps1y = processTimeRange(chartData.market_caps, 8760, 12, now);
+      
+      const volumes24h = processTimeRange(chartData.total_volumes, 24, 12, now);
+      const volumes7d = processTimeRange(chartData.total_volumes, 168, 28, now);
+      const volumes30d = processTimeRange(chartData.total_volumes, 720, 30, now);
+      const volumes1y = processTimeRange(chartData.total_volumes, 8760, 12, now);
       
       // Process and downsample the data
       const processed = {
@@ -376,33 +382,43 @@ async function fetchAndSaveChartData(coins) {
         name: coin.name,
         symbol: coin.symbol.toUpperCase(),
         charts: {
+          '24h': {
+            prices: prices24h.data,
+            prices_percent_change: calculatePercentageChange(prices24h.data),
+            market_caps: marketCaps24h.data,
+            market_caps_percent_change: calculatePercentageChange(marketCaps24h.data),
+            volumes: volumes24h.data,
+            volumes_percent_change: calculatePercentageChange(volumes24h.data),
+            interval: '2_hours',
+            points: 12
+          },
           '7d': {
-            prices: prices7d,
-            prices_percent_change: calculatePercentageChange(prices7d),
-            market_caps: marketCaps7d,
-            market_caps_percent_change: calculatePercentageChange(marketCaps7d),
-            volumes: volumes7d,
-            volumes_percent_change: calculatePercentageChange(volumes7d),
+            prices: prices7d.data,
+            prices_percent_change: calculatePercentageChange(prices7d.data),
+            market_caps: marketCaps7d.data,
+            market_caps_percent_change: calculatePercentageChange(marketCaps7d.data),
+            volumes: volumes7d.data,
+            volumes_percent_change: calculatePercentageChange(volumes7d.data),
             interval: '6_hours',
             points: 28
           },
           '30d': {
-            prices: prices30d,
-            prices_percent_change: calculatePercentageChange(prices30d),
-            market_caps: marketCaps30d,
-            market_caps_percent_change: calculatePercentageChange(marketCaps30d),
-            volumes: volumes30d,
-            volumes_percent_change: calculatePercentageChange(volumes30d),
-            interval: '3_days',
-            points: 10
+            prices: prices30d.data,
+            prices_percent_change: calculatePercentageChange(prices30d.data),
+            market_caps: marketCaps30d.data,
+            market_caps_percent_change: calculatePercentageChange(marketCaps30d.data),
+            volumes: volumes30d.data,
+            volumes_percent_change: calculatePercentageChange(volumes30d.data),
+            interval: '1_day',
+            points: 30
           },
           '1y': {
-            prices: prices1y,
-            prices_percent_change: calculatePercentageChange(prices1y),
-            market_caps: marketCaps1y,
-            market_caps_percent_change: calculatePercentageChange(marketCaps1y),
-            volumes: volumes1y,
-            volumes_percent_change: calculatePercentageChange(volumes1y),
+            prices: prices1y.data,
+            prices_percent_change: calculatePercentageChange(prices1y.data),
+            market_caps: marketCaps1y.data,
+            market_caps_percent_change: calculatePercentageChange(marketCaps1y.data),
+            volumes: volumes1y.data,
+            volumes_percent_change: calculatePercentageChange(volumes1y.data),
             interval: 'monthly',
             points: 12
           }
@@ -415,7 +431,7 @@ async function fetchAndSaveChartData(coins) {
       // Save to file
       const filename = path.join(dataDir, `${coin.id}.json`);
       await fs.writeFile(filename, JSON.stringify(processed, null, 2));
-      console.log(`  ✅ Saved chart data`);
+      console.log(`  ✅ Saved chart data with normalized timestamps`);
       
       // Delay to respect rate limits
       // CoinGecko free tier is very strict - using 10 seconds to be safe
@@ -425,6 +441,40 @@ async function fetchAndSaveChartData(coins) {
       console.error(`  ❌ Error: ${error.message}`);
     }
   }
+}
+
+// Process data for a specific time range with normalized timestamps
+function processTimeRange(data, hoursBack, targetPoints, baseTime) {
+  if (!data || data.length === 0) return { data: [], usedRecentData: false };
+  
+  // Take the most recent data points (assuming hourly data)
+  const recentData = data.slice(-hoursBack);
+  
+  if (recentData.length === 0) return { data: [], usedRecentData: false };
+  
+  // Downsample to target points
+  const downsampled = downsampleData(recentData, targetPoints);
+  
+  // Normalize timestamps to be relative to current time
+  const normalizedData = normalizeTimestamps(downsampled, hoursBack, baseTime);
+  
+  return {
+    data: normalizedData,
+    usedRecentData: recentData.length >= hoursBack * 0.8 // At least 80% of expected data
+  };
+}
+
+// Normalize timestamps to be consistent across all batches
+function normalizeTimestamps(data, hoursBack, baseTime) {
+  if (!data || data.length === 0) return [];
+  
+  const startTime = baseTime - (hoursBack * 60 * 60 * 1000);
+  const interval = (hoursBack * 60 * 60 * 1000) / data.length;
+  
+  return data.map(([_, value], index) => {
+    const timestamp = startTime + (index * interval);
+    return [timestamp, value];
+  });
 }
 
 // Downsample data to target number of points
@@ -454,7 +504,7 @@ function calculatePercentageChange(data) {
   if (!data || data.length === 0) return [];
   
   const baseline = data[0][1]; // First value
-  if (!baseline || baseline === 0) return data.map(([ts]) => [ts, 0]);
+  if (!baseline || baseline === 0) return data.map(([ts, _]) => [ts, 0]);
   
   return data.map(([timestamp, value]) => {
     const percentChange = ((value - baseline) / baseline) * 100;
