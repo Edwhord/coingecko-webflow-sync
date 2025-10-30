@@ -364,17 +364,17 @@ async function fetchAndSaveChartData(coins) {
       const prices24h = getRecentData(chartData.prices, 24, now); // 24 points
       const prices7d = getRecentData(chartData.prices, 168, now); // 168 points
       const prices30d = getRecentData(chartData.prices, 720, now); // 720 points
-      const prices1y = getRecentData(chartData.prices, 365, now); // 365 points (daily)
+      const prices1y = getRecentData(chartData.prices, 365, now, true); // 365 points (daily)
 
       const marketCaps24h = getRecentData(chartData.market_caps, 24, now);
       const marketCaps7d = getRecentData(chartData.market_caps, 168, now);
       const marketCaps30d = getRecentData(chartData.market_caps, 720, now);
-      const marketCaps1y = getRecentData(chartData.market_caps, 365, now);
-
+      const marketCaps1y = getRecentData(chartData.market_caps, 365, now, true);
+      
       const volumes24h = getRecentData(chartData.total_volumes, 24, now);
       const volumes7d = getRecentData(chartData.total_volumes, 168, now);
       const volumes30d = getRecentData(chartData.total_volumes, 720, now);
-      const volumes1y = getRecentData(chartData.total_volumes, 365, now);
+      const volumes1y = getRecentData(chartData.total_volumes, 365, now, true);
 
       // Process and save ALL data
       const processed = {
@@ -444,7 +444,7 @@ async function fetchAndSaveChartData(coins) {
 }
 
 // Get recent data with normalized timestamps (no downsampling)
-function getRecentData(data, pointsCount, baseTime) {
+function getRecentData(data, pointsCount, baseTime, isOneYear = false) {
   if (!data || data.length === 0) return [];
   
   // Take the most recent data points
@@ -453,7 +453,7 @@ function getRecentData(data, pointsCount, baseTime) {
   if (recentData.length === 0) return [];
   
   // Normalize timestamps to be relative to current time
-  return normalizeTimestamps(recentData, pointsCount, baseTime);
+  return normalizeTimestamps(recentData, pointsCount, baseTime, isOneYear);
 }
 
 // Process data for a specific time range with normalized timestamps
@@ -478,16 +478,29 @@ function processTimeRange(data, hoursBack, targetPoints, baseTime) {
 }
 
 // Normalize timestamps to be consistent across all batches
-function normalizeTimestamps(data, hoursBack, baseTime) {
+function normalizeTimestamps(data, pointsCount, baseTime, isOneYear = false) {
   if (!data || data.length === 0) return [];
   
-  const startTime = baseTime - (hoursBack * 60 * 60 * 1000);
-  const interval = (hoursBack * 60 * 60 * 1000) / data.length;
-  
-  return data.map(([_, value], index) => {
-    const timestamp = startTime + (index * interval);
-    return [timestamp, value];
-  });
+  if (isOneYear) {
+    // For 1-year data: start from exactly 1 year ago, use daily intervals
+    const oneYearAgo = baseTime - (365 * 24 * 60 * 60 * 1000); // Exactly 1 year ago
+    const interval = (365 * 24 * 60 * 60 * 1000) / data.length; // Daily intervals
+    
+    return data.map(([_, value], index) => {
+      const timestamp = oneYearAgo + (index * interval);
+      return [timestamp, value];
+    });
+  } else {
+    // For other ranges: use the existing logic
+    const hoursBack = pointsCount; // For hourly data, pointsCount = hours
+    const startTime = baseTime - (hoursBack * 60 * 60 * 1000);
+    const interval = (hoursBack * 60 * 60 * 1000) / data.length;
+    
+    return data.map(([_, value], index) => {
+      const timestamp = startTime + (index * interval);
+      return [timestamp, value];
+    });
+  }
 }
 
 // Downsample data to target number of points
