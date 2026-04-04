@@ -44,22 +44,20 @@ async function syncCoinsToWebflow() {
     const existingItems = await getAllWebflowItems();
     console.log(`Found ${existingItems.length} existing items in Webflow`);
     
-    // Step 3: Sync data to Webflow (update existing, create new)
+    // Step 3: Sync data to Webflow (DELETE old, UPDATE existing, CREATE new)
     const result = await syncItems(coins, existingItems);
     console.log('Webflow CMS updated successfully');
     
-    // Step 4: Archive coins that are no longer in top 50
-    await archiveOldCoins(coins, existingItems);
-    
-    // Step 5: Update Google Sheets
+    // Step 4: Update Google Sheets
     console.log('\nUpdating Google Sheets...');
     await updateGoogleSheets(coins);
     console.log('Google Sheets updated successfully');
     
-    // Step 6: Fetch chart data in rotating batches to avoid rate limits
+    // Step 5: Clean up old chart files
     console.log('\nCleaning up old chart files...');
     await cleanupOldChartFiles(coins);
     
+    // Step 6: Fetch chart data in rotating batches to avoid rate limits
     // Determine which batch to fetch based on current UTC hour
     // Runs every 2 hours, 7 batches to cover all 50 coins
     const currentHour = new Date().getUTCHours(); // 0-23
@@ -145,67 +143,71 @@ async function getAllWebflowItems() {
   return items;
 }
 
-// Archive coins that are no longer in top 50
-async function archiveOldCoins(currentCoins, existingItems) {
-  const currentCoinIds = new Set(currentCoins.map(c => c.id));
-  const itemsToArchive = existingItems.filter(item => 
-    !currentCoinIds.has(item.fieldData['coingecko-id'])
+// Sync items to Webflow - DELETE old, UPDATE existing, CREATE new
+async function syncItems(coins, existingItems) {
+  const results = { updated: 0, created: 0, deleted: 0, failed: 0 };
+  
+  // Get current top 50 coin IDs
+  const currentTop50Ids = new Set(coins.map(coin => coin.id));
+  
+  console.log(`\nCurrent top 50 coins:`, Array.from(currentTop50Ids).join(', '));
+  
+  // Step 1: DELETE items that are NOT in current top 50
+  const itemsToDelete = existingItems.filter(item => 
+    !currentTop50Ids.has(item.fieldData['coingecko-id'])
   );
   
-  console.log(`\nArchiving ${itemsToArchive.length} coins no longer in top 50...`);
-  
-  for (let i = 0; i < itemsToArchive.length; i++) {
-    const item = itemsToArchive[i];
-    try {
-      const response = await fetch(
-        `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION_ID}/items/${item.id}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Authorization': `Bearer ${WEBFLOW_API_TOKEN}`,
-            'Content-Type': 'application/json',
-            'accept': 'application/json'
-          },
-          body: JSON.stringify({ 
-            isArchived: true 
-          })
+  if (itemsToDelete.length > 0) {
+    console.log(`\n🗑️  Deleting ${itemsToDelete.length} coins that fell out of top 50...`);
+    for (const item of itemsToDelete) {
+      try {
+        const response = await fetch(
+          `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION_ID}/items/${item.id}`,
+          {
+            method: 'DELETE',
+            headers: {
+              'Authorization': `Bearer ${WEBFLOW_API_TOKEN}`,
+              'accept': 'application/json'
+            }
+          }
+        );
+        
+        if (response.ok) {
+          console.log(`  ✅ Deleted: ${item.fieldData.name || item.id}`);
+          results.deleted++;
+        } else {
+          console.error(`  ❌ Failed to delete ${item.fieldData.name}: ${response.status}`);
+          results.failed++;
         }
-      );
-      
-      if (response.ok) {
-        console.log(`  ✅ Archived: ${item.fieldData.name}`);
-      } else {
-        const errorText = await response.text();
-        console.error(`  ❌ Failed to archive ${item.fieldData.name}: ${errorText}`);
+        
+        // Rate limit protection
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        console.error(`  ❌ Error deleting ${item.fieldData.name}:`, error.message);
+        results.failed++;
       }
-      
-      // Small delay to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 100));
-    } catch (error) {
-      console.error(`  ❌ Error archiving ${item.fieldData.name}: ${error.message}`);
     }
+  } else {
+    console.log('\n✅ No coins to delete (all existing coins still in top 50)');
   }
   
-  if (itemsToArchive.length === 0) {
-    console.log('  ✅ No coins to archive');
-  }
-}
-
-// Sync items to Webflow - update existing, create new ones
-async function syncItems(coins, existingItems) {
-  const results = { updated: 0, created: 0, failed: 0 };
+  // Step 2: Get remaining items after deletion
+  const remainingItems = existingItems.filter(item => 
+    currentTop50Ids.has(item.fieldData['coingecko-id'])
+  );
   
   // Create a map of existing items by coingecko-id for easy lookup
   const existingItemsMap = new Map();
-  existingItems.forEach(item => {
+  remainingItems.forEach(item => {
     const coingeckoId = item.fieldData['coingecko-id'];
     if (coingeckoId) {
       existingItemsMap.set(coingeckoId, item);
     }
   });
   
-  console.log(`\nSyncing ${coins.length} coins to Webflow...\n`);
+  console.log(`\nSyncing ${coins.length} top 50 coins to Webflow...\n`);
   
+  // Step 3: UPDATE existing coins or CREATE new ones
   for (let i = 0; i < coins.length; i++) {
     const coin = coins[i];
     const coingeckoId = coin.id;
@@ -232,8 +234,9 @@ async function syncItems(coins, existingItems) {
       };
       
       if (existingItem) {
-        // UPDATE existing item (preserves the item and its ID)
+        // UPDATE existing coin
         console.log(`[${i + 1}/${coins.length}] Updating: ${coin.name}`);
+        
         const response = await fetch(
           `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION_ID}/items/${existingItem.id}`,
           {
@@ -243,7 +246,11 @@ async function syncItems(coins, existingItems) {
               'Content-Type': 'application/json',
               'accept': 'application/json'
             },
-            body: JSON.stringify({ fieldData })
+            body: JSON.stringify({
+              fieldData,
+              isArchived: false,
+              isDraft: false
+            })
           }
         );
         
@@ -251,12 +258,13 @@ async function syncItems(coins, existingItems) {
           results.updated++;
         } else {
           const errorText = await response.text();
-          console.error(`  ❌ Failed to update (${response.status}): ${errorText}`);
+          console.error(`  ❌ Failed (${response.status}): ${errorText}`);
           results.failed++;
         }
       } else {
-        // CREATE new item (for coins that entered top 50)
-        console.log(`[${i + 1}/${coins.length}] Creating: ${coin.name}`);
+        // CREATE new coin (entered or returned to top 50)
+        console.log(`[${i + 1}/${coins.length}] Creating: ${coin.name} (NEW or RETURNED to top 50)`);
+        
         const response = await fetch(
           `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION_ID}/items`,
           {
@@ -278,16 +286,16 @@ async function syncItems(coins, existingItems) {
           results.created++;
         } else {
           const errorText = await response.text();
-          console.error(`  ❌ Failed to create (${response.status}): ${errorText}`);
+          console.error(`  ❌ Failed (${response.status}): ${errorText}`);
           results.failed++;
         }
       }
       
-      // Small delay to avoid rate limiting
+      // Rate limit protection
       await new Promise(resolve => setTimeout(resolve, 100));
       
     } catch (error) {
-      console.error(`[${i + 1}/${coins.length}] Error: ${error.message}`);
+      console.error(`[${i + 1}/${coins.length}] Error processing ${coin.name}:`, error.message);
       results.failed++;
     }
   }
@@ -314,15 +322,15 @@ async function cleanupOldChartFiles(currentCoins) {
       const coinId = file.replace('.json', '');
       if (!currentIds.has(coinId)) {
         await fs.unlink(path.join(dataDir, file));
-        console.log(`  🗑️  Deleted: ${file}`);
+        console.log(`  🗑️  Deleted chart: ${file}`);
         deletedCount++;
       }
     }
     
     if (deletedCount === 0) {
-      console.log('  ✅ No old files to clean up');
+      console.log('  ✅ No old chart files to clean up');
     } else {
-      console.log(`  ✅ Cleaned up ${deletedCount} old file(s)`);
+      console.log(`  ✅ Cleaned up ${deletedCount} chart file(s)`);
     }
     
   } catch (error) {
@@ -361,10 +369,10 @@ async function fetchAndSaveChartData(coins) {
       const now = Date.now();
       
       // Process data with ALL points (no downsampling)
-      const prices24h = getRecentData(chartData.prices, 24, now); // 24 points
-      const prices7d = getRecentData(chartData.prices, 168, now); // 168 points
-      const prices30d = getRecentData(chartData.prices, 720, now); // 720 points
-      const prices1y = getRecentData(chartData.prices, 365, now, true); // 365 points (daily)
+      const prices24h = getRecentData(chartData.prices, 24, now);
+      const prices7d = getRecentData(chartData.prices, 168, now);
+      const prices30d = getRecentData(chartData.prices, 720, now);
+      const prices1y = getRecentData(chartData.prices, 365, now, true);
 
       const marketCaps24h = getRecentData(chartData.market_caps, 24, now);
       const marketCaps7d = getRecentData(chartData.market_caps, 168, now);
@@ -384,7 +392,7 @@ async function fetchAndSaveChartData(coins) {
           charts: {
               '24h': {
                   prices: prices24h,
-                  prices_percent_change: calculatePercentageChange(prices24h), // Accurate from full data
+                  prices_percent_change: calculatePercentageChange(prices24h),
                   market_caps: marketCaps24h,
                   market_caps_percent_change: calculatePercentageChange(marketCaps24h),
                   volumes: volumes24h,
@@ -394,7 +402,7 @@ async function fetchAndSaveChartData(coins) {
               },
               '7d': {
                   prices: prices7d,
-                  prices_percent_change: calculatePercentageChange(prices7d), // Accurate from full data
+                  prices_percent_change: calculatePercentageChange(prices7d),
                   market_caps: marketCaps7d,
                   market_caps_percent_change: calculatePercentageChange(marketCaps7d),
                   volumes: volumes7d,
@@ -404,7 +412,7 @@ async function fetchAndSaveChartData(coins) {
               },
               '30d': {
                   prices: prices30d,
-                  prices_percent_change: calculatePercentageChange(prices30d), // Accurate from full data
+                  prices_percent_change: calculatePercentageChange(prices30d),
                   market_caps: marketCaps30d,
                   market_caps_percent_change: calculatePercentageChange(marketCaps30d),
                   volumes: volumes30d,
@@ -414,7 +422,7 @@ async function fetchAndSaveChartData(coins) {
               },
               '1y': {
                   prices: prices1y,
-                  prices_percent_change: calculatePercentageChange(prices1y), // Accurate from full data
+                  prices_percent_change: calculatePercentageChange(prices1y),
                   market_caps: marketCaps1y,
                   market_caps_percent_change: calculatePercentageChange(marketCaps1y),
                   volumes: volumes1y,
@@ -456,35 +464,14 @@ function getRecentData(data, pointsCount, baseTime, isOneYear = false) {
   return normalizeTimestamps(recentData, pointsCount, baseTime, isOneYear);
 }
 
-// Process data for a specific time range with normalized timestamps
-function processTimeRange(data, hoursBack, targetPoints, baseTime) {
-  if (!data || data.length === 0) return { data: [], usedRecentData: false };
-  
-  // Take the most recent data points (assuming hourly data)
-  const recentData = data.slice(-hoursBack);
-  
-  if (recentData.length === 0) return { data: [], usedRecentData: false };
-  
-  // Downsample to target points
-  const downsampled = downsampleData(recentData, targetPoints);
-  
-  // Normalize timestamps to be relative to current time
-  const normalizedData = normalizeTimestamps(downsampled, hoursBack, baseTime);
-  
-  return {
-    data: normalizedData,
-    usedRecentData: recentData.length >= hoursBack * 0.8 // At least 80% of expected data
-  };
-}
-
 // Normalize timestamps to be consistent across all batches
 function normalizeTimestamps(data, pointsCount, baseTime, isOneYear = false) {
   if (!data || data.length === 0) return [];
   
   if (isOneYear) {
     // For 1-year data: start from exactly 1 year ago, use daily intervals
-    const oneYearAgo = baseTime - (365 * 24 * 60 * 60 * 1000); // Exactly 1 year ago
-    const interval = (365 * 24 * 60 * 60 * 1000) / data.length; // Daily intervals
+    const oneYearAgo = baseTime - (365 * 24 * 60 * 60 * 1000);
+    const interval = (365 * 24 * 60 * 60 * 1000) / data.length;
     
     return data.map(([_, value], index) => {
       const timestamp = oneYearAgo + (index * interval);
@@ -493,10 +480,10 @@ function normalizeTimestamps(data, pointsCount, baseTime, isOneYear = false) {
   } else {
     // For other ranges: calculate hoursBack based on pointsCount
     let hoursBack;
-    if (pointsCount === 24) hoursBack = 24; // 24h range
-    else if (pointsCount === 168) hoursBack = 168; // 7d range (168 hours)
-    else if (pointsCount === 720) hoursBack = 720; // 30d range (720 hours)
-    else hoursBack = pointsCount; // fallback
+    if (pointsCount === 24) hoursBack = 24;
+    else if (pointsCount === 168) hoursBack = 168;
+    else if (pointsCount === 720) hoursBack = 720;
+    else hoursBack = pointsCount;
     
     const startTime = baseTime - (hoursBack * 60 * 60 * 1000);
     const interval = (hoursBack * 60 * 60 * 1000) / data.length;
@@ -610,10 +597,11 @@ function logResults(results) {
   console.log('\n' + '='.repeat(50));
   console.log('SYNC RESULTS');
   console.log('='.repeat(50));
-  console.log(`✅ Webflow Updated: ${results.updated}`);
-  console.log(`✨ Webflow Created: ${results.created}`);
+  console.log(`✅ Updated: ${results.updated}`);
+  console.log(`✨ Created: ${results.created}`);
+  console.log(`🗑️  Deleted: ${results.deleted}`);
   console.log(`❌ Failed: ${results.failed}`);
-  console.log(`📊 Total: ${results.updated + results.created + results.failed}`);
+  console.log(`📊 Total processed: ${results.updated + results.created + results.deleted + results.failed}`);
   console.log('='.repeat(50));
 }
 
